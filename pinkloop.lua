@@ -23,7 +23,7 @@ end
 
 restart()
 print("Pink loop started. Volume: "..volume)
-print("Press Q or Esc to stop cleanly. Ctrl+Alt+C force quits.")
+print("Press Q to stop cleanly. Ctrl+Alt+C force quits.")
 
 while true do
   if tape.getPosition()>=trackEnd or tape.isEnd() or tape.getState()~="PLAYING" then
@@ -31,7 +31,7 @@ while true do
   end
 
   local name,_,_,code=event.pull(0.05)
-  if name=="key_down" and (code==keyboard.keys.q or code==keyboard.keys.esc) then
+  if name=="key_down" and code==keyboard.keys.q then
     break
   end
 end
