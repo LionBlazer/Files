@@ -31,9 +31,19 @@ local metaUrl=rawBase..".meta"
 local function readAll(url)
   local request=internet.request(url,nil,{["user-agent"]="OpenComputers"})
   local chunks={}
-  for chunk in request do chunks[#chunks+1]=chunk end
-  local code,msg=request.response()
-  assert(code and code>=200 and code<300,"HTTP "..tostring(code).." "..tostring(msg))
+  local checked=false
+  for chunk in request do
+    if not checked then
+      local code,msg=request.response()
+      assert(code and code>=200 and code<300,"HTTP "..tostring(code).." "..tostring(msg))
+      checked=true
+    end
+    chunks[#chunks+1]=chunk
+  end
+  if not checked then
+    local code,msg=request.response()
+    assert(code and code>=200 and code<300,"HTTP "..tostring(code).." "..tostring(msg))
+  end
   return table.concat(chunks)
 end
 
@@ -45,45 +55,44 @@ assert(rate and totalSamples,"Invalid metadata")
 
 local targetSamples=seconds and math.min(totalSamples,math.floor(seconds*rate)) or totalSamples
 local targetBytes=math.ceil(targetSamples/8)
-local tapeSize=tape.getSize()
-assert(targetBytes<=tapeSize,"Tape too small: need "..targetBytes.." bytes")
+assert(targetBytes<=tape.getSize(),"Tape too small: need "..targetBytes.." bytes")
 
 local response=0
 local level=0
 local lastBit=false
 local sampleCount=0
-local written=0
+local produced=0
 local pack=0
 local packBits=0
+local output={}
+local outputCount=0
 local started=computer.uptime()
 local lastDraw=0
+local floor=math.floor
+local char=string.char
 
-local function update(bit)
-  local target=bit and 127 or -128
-  local nextLevel=level+math.floor((response*(target-level)+128)/256)
-  if nextLevel==level and level~=target then nextLevel=nextLevel+(bit and 1 or -1) end
-  local responseTarget,delta
-  if bit==lastBit then responseTarget,delta=255,7 else responseTarget,delta=0,20 end
-  local nextResponse=response+math.floor((delta*(responseTarget-response)+128)/256)
-  if nextResponse==response and response~=responseTarget then
-    nextResponse=nextResponse+(responseTarget==255 and 1 or -1)
+local function flush()
+  if outputCount>0 then
+    tape.write(table.concat(output,"",1,outputCount))
+    output={}
+    outputCount=0
   end
-  response,level,lastBit=nextResponse,nextLevel,bit
 end
 
-local function writePacked()
-  tape.write(string.char(pack))
-  written=written+1
-  pack=0
-  packBits=0
+local function pushByte(value)
+  outputCount=outputCount+1
+  output[outputCount]=char(value)
+  produced=produced+1
+  if outputCount>=512 then flush() end
 end
 
 local function draw()
   local elapsed=math.max(computer.uptime()-started,0.001)
   local progress=math.min(sampleCount/targetSamples,1)
   local width=16
-  local fill=math.floor(progress*width)
-  local text=string.format("[%s%s] %3d%% %.1f KB/s",string.rep("#",fill),string.rep("-",width-fill),math.floor(progress*100),(written/1024)/elapsed)
+  local fill=floor(progress*width)
+  local speed=(produced/1024)/elapsed
+  local text=string.format("[%s%s] %3d%% %.1f KB/s",string.rep("#",fill),string.rep("-",width-fill),floor(progress*100),speed)
   local _,y=term.getCursor()
   local screenWidth=component.gpu.getResolution()
   term.setCursor(1,y)
@@ -95,41 +104,86 @@ tape.seek(-tape.getPosition())
 print("Streaming and converting...")
 
 local request=internet.request(pcmUrl,nil,{["user-agent"]="OpenComputers"})
+local checked=false
+local finished=false
+
 for chunk in request do
+  if not checked then
+    local code,msg=request.response()
+    assert(code and code>=200 and code<300,"HTTP "..tostring(code).." "..tostring(msg))
+    checked=true
+  end
+
   for i=1,#chunk do
-    if sampleCount>=targetSamples then break end
+    if sampleCount>=targetSamples then finished=true break end
+
     local sample=chunk:byte(i)
     if sample>=128 then sample=sample-256 end
+
     local bit=sample>level or (sample==level and level==127)
-    pack=bit and math.floor(pack/2)+128 or math.floor(pack/2)
-    update(bit)
+    pack=bit and floor(pack/2)+128 or floor(pack/2)
+
+    local target=bit and 127 or -128
+    local nextLevel=level+floor((response*(target-level)+128)/256)
+    if nextLevel==level and level~=target then nextLevel=nextLevel+(bit and 1 or -1) end
+
+    local responseTarget,delta
+    if bit==lastBit then responseTarget,delta=255,7 else responseTarget,delta=0,20 end
+    local nextResponse=response+floor((delta*(responseTarget-response)+128)/256)
+    if nextResponse==response and response~=responseTarget then
+      nextResponse=nextResponse+(responseTarget==255 and 1 or -1)
+    end
+
+    response,level,lastBit=nextResponse,nextLevel,bit
     packBits=packBits+1
     sampleCount=sampleCount+1
-    if packBits==8 then writePacked() end
+
+    if packBits==8 then
+      pushByte(pack)
+      pack=0
+      packBits=0
+    end
   end
+
   if computer.uptime()-lastDraw>=0.2 then draw();lastDraw=computer.uptime() end
-  if sampleCount>=targetSamples then break end
+  if finished or sampleCount>=targetSamples then break end
 end
 
-local code,msg=request.response()
-assert(code and code>=200 and code<300,"HTTP "..tostring(code).." "..tostring(msg))
+if not checked then
+  local code,msg=request.response()
+  assert(code and code>=200 and code<300,"HTTP "..tostring(code).." "..tostring(msg))
+end
+
 if packBits>0 then
   while packBits<8 do
     local bit=0>level
-    pack=bit and math.floor(pack/2)+128 or math.floor(pack/2)
-    update(bit)
+    pack=bit and floor(pack/2)+128 or floor(pack/2)
+
+    local target=bit and 127 or -128
+    local nextLevel=level+floor((response*(target-level)+128)/256)
+    if nextLevel==level and level~=target then nextLevel=nextLevel+(bit and 1 or -1) end
+
+    local responseTarget,delta
+    if bit==lastBit then responseTarget,delta=255,7 else responseTarget,delta=0,20 end
+    local nextResponse=response+floor((delta*(responseTarget-response)+128)/256)
+    if nextResponse==response and response~=responseTarget then
+      nextResponse=nextResponse+(responseTarget==255 and 1 or -1)
+    end
+
+    response,level,lastBit=nextResponse,nextLevel,bit
     packBits=packBits+1
   end
-  writePacked()
+  pushByte(pack)
 end
 
+flush()
 draw()
 io.write("\n")
 tape.seek(-tape.getPosition())
 
-local config={rate=rate,bytes=written,source=source}
+local config={rate=rate,bytes=produced,source=source}
 local file=assert(io.open("/etc/tape.meta","w"))
 file:write(serialization.serialize(config))
 file:close()
 
-print("Done: "..written.." bytes, "..string.format("%.2f",sampleCount/rate).." s")
+print("Done: "..produced.." bytes, "..string.format("%.2f",sampleCount/rate).." s")
