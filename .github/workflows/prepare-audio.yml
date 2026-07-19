@@ -5,6 +5,7 @@ on:
     paths:
       - "**/*.mp3"
       - "*.mp3"
+      - ".github/workflows/prepare-audio.yml"
   workflow_dispatch:
 
 permissions:
