@@ -23,7 +23,7 @@ end
 
 restart()
 print("Pink loop started. Volume: "..volume)
-print("Press Q or Esc to stop.")
+print("Press Q or Esc to stop cleanly. Ctrl+Alt+C force quits.")
 
 while true do
   if tape.getPosition()>=trackEnd or tape.isEnd() or tape.getState()~="PLAYING" then
