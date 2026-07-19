@@ -1,0 +1,49 @@
+name: Prepare audio sidecars
+
+on:
+  push:
+    paths:
+      - "**/*.mp3"
+      - "*.mp3"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Convert MP3 files
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' file; do
+            pcm="${file}.pcm8"
+            meta="${file}.meta"
+            ffmpeg -hide_banner -loglevel error -y -i "$file" \
+              -af "pan=mono|c0=0.5*c0+0.5*c1" \
+              -ar 60000 -ac 1 -f s8 "$pcm"
+            samples=$(wc -c < "$pcm" | tr -d ' ')
+            printf 'rate=60000\nsamples=%s\n' "$samples" > "$meta"
+          done < <(find . -type f -name '*.mp3' -print0)
+
+      - name: Commit generated sidecars
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- '*.mp3.pcm8' '*.mp3.meta'
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "Generate audio sidecars"
+            git push
+          fi
