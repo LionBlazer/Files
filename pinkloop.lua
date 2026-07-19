@@ -1,5 +1,7 @@
 local component=require("component")
-local computer=require("computer")
+local event=require("event")
+local keyboard=require("keyboard")
+
 local tape=component.tape_drive
 local args={...}
 local volume=tonumber(args[1]) or 0.8
@@ -21,19 +23,18 @@ end
 
 restart()
 print("Pink loop started. Volume: "..volume)
-print("Press Ctrl+C to stop.")
+print("Press Q or Esc to stop.")
 
-local ok,err=pcall(function()
-  while true do
-    if tape.getPosition()>=trackEnd or tape.isEnd() or tape.getState()~="PLAYING" then
-      restart()
-    end
-    computer.pullSignal(0.05)
+while true do
+  if tape.getPosition()>=trackEnd or tape.isEnd() or tape.getState()~="PLAYING" then
+    restart()
   end
-end)
+
+  local name,_,_,code=event.pull(0.05)
+  if name=="key_down" and (code==keyboard.keys.q or code==keyboard.keys.esc) then
+    break
+  end
+end
 
 tape.stop()
-
-if not ok and not tostring(err):match("interrupted") then
-  error(err)
-end
+print("Stopped.")
